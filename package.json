@@ -1,0 +1,12 @@
+{
+  "name": "goaliq",
+  "version": "1.0.0",
+  "description": "GOAL-IQ - AI-powered World Cup predictions",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
