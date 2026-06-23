@@ -1,3 +1,28 @@
+// Load environment variables from .env file if it exists (local development support)
+try {
+  const fs = require('fs');
+  const path = require('path');
+  const envPath = path.join(__dirname, '.env');
+  if (fs.existsSync(envPath)) {
+    const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/);
+    lines.forEach(line => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) return;
+      const index = trimmed.indexOf('=');
+      if (index > 0) {
+        const key = trimmed.slice(0, index).trim();
+        let value = trimmed.slice(index + 1).trim();
+        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+          value = value.slice(1, -1);
+        }
+        process.env[key] = value;
+      }
+    });
+  }
+} catch (e) {
+  console.log('Error loading .env file:', e.message);
+}
+
 // ============================================================
 //   API Keys — set these as Environment Variables on Railway/Vercel
 //   For local dev they fall back to the values below
@@ -7,6 +32,11 @@ const OPENAI_KEY   = process.env.OPENAI_KEY   || 'sk-proj-O7qjvMwJJq1d-NHMuIcV1o
 const CLAUDE_KEY   = process.env.CLAUDE_KEY   || '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';
 const FOOTBALL_KEY = process.env.FOOTBALL_KEY || '42d361dfc176060098766f96e9b09f6c2997dcc314f46b5fc60ed8a9b0b4cb40';
 // ============================================================
+
+let GEMINI_DISABLED = false;
+let GPT_DISABLED = false;
+let CLAUDE_DISABLED = false;
+
 
 
 const http = require('http');
@@ -260,15 +290,20 @@ async function analyzeAI(home, away, stage) {
 
   const prompt = buildPrompt(home, away, stage, '', '');
   const jobs = [];
-  if (GEMINI_KEY !== 'PASTE-GEMINI-KEY-HERE') jobs.push({ name: 'Gemini', col: '#4285f4', fn: () => askGemini(prompt) });
-  if (OPENAI_KEY !== 'PASTE-GPT-KEY-HERE') jobs.push({ name: 'GPT-4o', col: '#19c37d', fn: () => askGPT(prompt) });
-  if (CLAUDE_KEY !== 'PASTE-CLAUDE-KEY-HERE') jobs.push({ name: 'Claude', col: '#cc785c', fn: () => askClaude(prompt) });
+  if (GEMINI_KEY !== 'PASTE-GEMINI-KEY-HERE' && !GEMINI_DISABLED) jobs.push({ name: 'Gemini', col: '#4285f4', fn: () => askGemini(prompt) });
+  if (OPENAI_KEY !== 'PASTE-GPT-KEY-HERE' && !GPT_DISABLED) jobs.push({ name: 'GPT-4o', col: '#19c37d', fn: () => askGPT(prompt) });
+  if (CLAUDE_KEY !== 'PASTE-CLAUDE-KEY-HERE' && !CLAUDE_DISABLED) jobs.push({ name: 'Claude', col: '#cc785c', fn: () => askClaude(prompt) });
   if (!jobs.length) return fallbackAnalyze(home, away);
 
   const settled = await Promise.allSettled(jobs.map(async (j) => {
     try {
       return await j.fn();
     } catch (e) {
+      const msg = e.message || '';
+      const isAuthError = msg.includes('API key') || msg.includes('authentication credentials') || msg.includes('x-api-key') || msg.includes('API Key') || msg.includes('Incorrect API key');
+      if (isAuthError) {
+        throw e; // fail fast, don't wait 3 seconds to retry
+      }
       // transient failure (high demand / rate) -> wait and retry once
       await new Promise((r) => setTimeout(r, 3000));
       return await j.fn();
@@ -281,6 +316,13 @@ async function analyzeAI(home, away, stage) {
       if (p) votes.push({ name: jobs[i].name, col: jobs[i].col, data: p });
     } else {
       console.log('  [skip ' + jobs[i].name + '] ' + (s.reason?.message || '').slice(0, 50));
+      const msg = s.reason?.message || '';
+      const isAuthError = msg.includes('API key') || msg.includes('authentication credentials') || msg.includes('x-api-key') || msg.includes('API Key') || msg.includes('Incorrect API key');
+      if (isAuthError) {
+        if (jobs[i].name === 'Gemini') { GEMINI_DISABLED = true; console.log('  [SYSTEM] Gemini disabled due to invalid credentials.'); }
+        if (jobs[i].name === 'GPT-4o') { GPT_DISABLED = true; console.log('  [SYSTEM] GPT-4o disabled due to invalid credentials.'); }
+        if (jobs[i].name === 'Claude') { CLAUDE_DISABLED = true; console.log('  [SYSTEM] Claude disabled due to invalid credentials.'); }
+      }
     }
   });
   if (!votes.length) return fallbackAnalyze(home, away);
@@ -400,15 +442,18 @@ const server = http.createServer(async (req, res) => {
       if (!games.length) games = all.slice(-4);
       games = games.slice(0, 4);
 
-      const matches = [];
-      for (const m of games) {
-        const todayKey = new Date().toISOString().slice(0, 10) + '__' + m.team1 + '__' + m.team2;
-        const cached = !!ANALYSIS_CACHE[todayKey];
+      const promises = games.map(async (m) => {
         const an = await analyzeAI(m.team1, m.team2, m.group || m.round);
-        matches.push({ league: 'World Cup 2026 - ' + (m.group || m.round || ''),
-          home: m.team1, away: m.team2, time: m.time || '', date: m.date, ...an });
-        if (!cached && an.byAI) await new Promise((r) => setTimeout(r, 1500));
-      }
+        return {
+          league: 'World Cup 2026 - ' + (m.group || m.round || ''),
+          home: m.team1,
+          away: m.team2,
+          time: m.time || '',
+          date: m.date,
+          ...an
+        };
+      });
+      const matches = await Promise.all(promises);
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ date: todayStr, count: matches.length, matches }));

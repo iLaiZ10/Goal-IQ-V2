@@ -1541,7 +1541,14 @@ function loadPredictions(){
 function renderPredictions(fixtures){
   const grid=document.getElementById('pred-grid');
   grid.innerHTML=fixtures.map((fx,idx)=>{
-    const models=(fx.models&&fx.models.length)?fx.models:[{name:'Gemini',col:'#4285f4',pick:fx.verdict}];
+    const isRealAI = fx.byAI !== false;
+    const models = isRealAI 
+      ? ((fx.models && fx.models.length) ? fx.models : []) 
+      : [{ name: 'מנוע סימולציה (Offline)', col: '#8e9aa8', pick: fx.verdict }];
+    const verdictLabel = isRealAI 
+      ? (models.length > 1 ? `פסיקת הפאנל (${models.length} AI)` : 'פסיקת המערכת (AI)')
+      : 'פסיקת סימולציה (Offline)';
+
     const an={h:fx.h,d:fx.d,a:fx.a,verdict:fx.verdict,conf:fx.conf,score:fx.score||'',
       models:models,
       angle:fx.angle||'ניתוח מבוסס נתוני המשחק.',
@@ -1573,7 +1580,7 @@ function renderPredictions(fixtures){
       </div>
       <div class="pred-time">🕐 ${fx.time} · ${fx.date||''}</div>
       <div class="pred-verdict">
-        <div class="pred-verdict-label">${an.models.length>1?'פסיקת הפאנל ('+an.models.length+' AI)':'פסיקת המערכת'} · ביטחון ${an.conf}%</div>
+        <div class="pred-verdict-label">${verdictLabel} · ביטחון ${an.conf}%</div>
         <div class="pred-verdict-main">${an.verdict}${an.score?` <span style="font-size:1rem;color:var(--cyan)">(${an.score})</span>`:''}</div>
         
         <div class="prob-circular-row">
